@@ -3,15 +3,25 @@ import numpy as np
 import matplotlib.pyplot as plt
 from collections import defaultdict
 import random
+import time
 
 # ==========================================================
-# PAGE CONFIG
+# PAGE
 # ==========================================================
 
 st.set_page_config(page_title="Windy Gridworld RL", layout="wide")
 
 st.title("🌪️ Windy Gridworld — Reinforcement Learning")
 
+# ==========================================================
+# SESSION STATE
+# ==========================================================
+
+if "path" not in st.session_state:
+    st.session_state.path = []
+
+if "play" not in st.session_state:
+    st.session_state.play = False
 
 # ==========================================================
 # ENVIRONMENT
@@ -246,6 +256,90 @@ class MonteCarloAgent:
 
 
 # ==========================================================
+# GENERATE PATH
+# ==========================================================
+
+
+def generate_path(env, policy):
+
+    state = env.reset()
+
+    path = [state]
+
+    done = False
+
+    steps = 0
+
+    while not done and steps < 100:
+
+        if state not in policy:
+            break
+
+        action = policy[state]
+
+        next_state, reward, done = env.step(action)
+
+        path.append(next_state)
+
+        state = next_state
+
+        steps += 1
+
+    return path
+
+
+# ==========================================================
+# DRAW FUNCTION
+# ==========================================================
+
+
+def draw_policy(env, policy, algorithm, current_position=None):
+
+    arrows = {0: "→", 1: "↑", 2: "←", 3: "↓", 4: "↗", 5: "↖", 6: "↘", 7: "↙"}
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+
+    ax.set_xlim(-0.5, env.width - 0.5)
+    ax.set_ylim(env.height - 0.5, -0.5)
+
+    ax.set_xticks(range(env.width))
+    ax.set_yticks(range(env.height))
+
+    ax.grid()
+
+    # WIND
+    for col in range(env.width):
+
+        ax.text(col, -0.3, f"W={env.wind[col]}", ha="center", color="red")
+
+    # POLICY
+    for state, action in policy.items():
+
+        x, y = state
+
+        ax.text(x, y, arrows[action], fontsize=20, ha="center", va="center")
+
+    # START
+    sx, sy = env.start
+
+    ax.text(sx, sy, "S", fontsize=24, color="orange", ha="center")
+
+    # GOAL
+    gx, gy = env.goal
+
+    ax.text(gx, gy, "G", fontsize=24, color="green", ha="center")
+
+    # AGENT
+    if current_position is not None:
+
+        ax.plot(current_position[0], current_position[1], "bo", markersize=20)
+
+    ax.set_title(f"{algorithm} Learned Policy")
+
+    return fig
+
+
+# ==========================================================
 # SIDEBAR
 # ==========================================================
 
@@ -265,13 +359,9 @@ kings_moves = st.sidebar.checkbox("King's Moves", value=True)
 
 stochastic = st.sidebar.checkbox("Stochastic Wind", value=False)
 
-
-# ==========================================================
-# TRAIN BUTTON
-# ==========================================================
-
 train_button = st.sidebar.button("🚀 Train Agent")
 
+play_button = st.sidebar.button("▶️ Play Learned Path")
 
 # ==========================================================
 # TRAIN
@@ -295,44 +385,56 @@ if train_button:
 
     policy = agent.get_policy()
 
+    path = generate_path(env, policy)
+
+    st.session_state.path = path
+    st.session_state.policy = policy
+    st.session_state.env = env
+    st.session_state.agent = agent
+    st.session_state.algorithm = algorithm
+
     st.success("Training Complete!")
 
-    # ======================================================
-    # POLICY VISUALIZATION
-    # ======================================================
+# ==========================================================
+# DISPLAY POLICY
+# ==========================================================
 
-    arrows = {0: "→", 1: "↑", 2: "←", 3: "↓", 4: "↗", 5: "↖", 6: "↘", 7: "↙"}
+if "policy" in st.session_state:
 
-    fig, ax = plt.subplots(figsize=(10, 7))
-
-    ax.set_xlim(-0.5, env.width - 0.5)
-    ax.set_ylim(env.height - 0.5, -0.5)
-
-    ax.set_xticks(range(env.width))
-    ax.set_yticks(range(env.height))
-
-    ax.grid()
-
-    for col in range(env.width):
-
-        ax.text(col, -0.3, f"W={env.wind[col]}", ha="center", color="red")
-
-    for state, action in policy.items():
-
-        x, y = state
-
-        ax.text(x, y, arrows[action], fontsize=20, ha="center", va="center")
-
-    sx, sy = env.start
-    gx, gy = env.goal
-
-    ax.text(sx, sy, "S", fontsize=22, color="orange", ha="center")
-
-    ax.text(gx, gy, "G", fontsize=22, color="green", ha="center")
-
-    ax.set_title(f"{algorithm} Learned Policy")
+    fig = draw_policy(
+        st.session_state.env, st.session_state.policy, st.session_state.algorithm
+    )
 
     st.pyplot(fig)
+
+    # ======================================================
+    # PATH
+    # ======================================================
+
+    st.subheader("📍 Learned Path")
+
+    st.write(st.session_state.path)
+
+    # ======================================================
+    # PLAY ANIMATION
+    # ======================================================
+
+    if play_button:
+
+        placeholder = st.empty()
+
+        for pos in st.session_state.path:
+
+            fig = draw_policy(
+                st.session_state.env,
+                st.session_state.policy,
+                st.session_state.algorithm,
+                current_position=pos,
+            )
+
+            placeholder.pyplot(fig)
+
+            time.sleep(0.4)
 
     # ======================================================
     # LEARNING CURVE
@@ -340,7 +442,9 @@ if train_button:
 
     fig2, ax2 = plt.subplots(figsize=(10, 4))
 
-    moving_avg = np.convolve(agent.steps_per_episode, np.ones(100) / 100, mode="valid")
+    moving_avg = np.convolve(
+        st.session_state.agent.steps_per_episode, np.ones(100) / 100, mode="valid"
+    )
 
     ax2.plot(moving_avg)
 
@@ -355,14 +459,16 @@ if train_button:
     st.pyplot(fig2)
 
     # ======================================================
-    # STATISTICS
+    # STATS
     # ======================================================
 
     st.subheader("📊 Statistics")
 
-    st.write("Average Final Steps:", np.mean(agent.steps_per_episode[-100:]))
+    st.write(
+        "Average Final Steps:", np.mean(st.session_state.agent.steps_per_episode[-100:])
+    )
 
-    st.write("Total States Learned:", len(policy))
+    st.write("Total Learned States:", len(st.session_state.policy))
 
     # ======================================================
     # EXPLANATION
@@ -372,16 +478,16 @@ if train_button:
 
     if kings_moves:
 
-        st.write("King's Moves allow diagonal movement, creating shorter paths.")
+        st.write("King's Moves allow diagonal movement and shorter paths.")
 
     if stochastic:
 
-        st.write("Stochastic wind creates more cautious policies.")
+        st.write("Stochastic wind creates more robust and cautious policies.")
 
     if algorithm == "SARSA":
 
-        st.write("SARSA learns faster using Temporal Difference learning.")
+        st.write("SARSA updates after every step using TD learning.")
 
     else:
 
-        st.write("Monte Carlo waits until episode end before updating.")
+        st.write("Monte Carlo waits until the end of an episode before learning.")
