@@ -275,7 +275,7 @@ def generate_path(env, policy):
         if state not in policy:
             break
 
-        action = policy[state]
+        action = np.argmax(agent.Q[state])
 
         next_state, reward, done = env.step(action)
 
