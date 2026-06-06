@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Windy Gridworld Demo</title>
+  <style>
+    body { margin: 0; font-family: system-ui, sans-serif; background: radial-gradient(circle at top, #1e293b, #020617); color: #e5e7eb; }
+    .wrap { display: grid; grid-template-columns: 1fr 320px; gap: 18px; padding: 18px; }
+    .panel { background: rgba(15, 23, 42, 0.94); border: 1px solid rgba(148, 163, 184, 0.25); border-radius: 18px; padding: 16px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+    .controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    button { padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(148, 163, 184, 0.35); background: #0f172a; color: #e5e7eb; cursor: pointer; }
+    button.active { background: #38bdf8; color: #00111a; border-color: transparent; font-weight: 700; }
+    .grid { display: grid; grid-template-columns: repeat(10, 52px); gap: 4px; width: fit-content; }
+    .cell { width: 52px; height: 52px; border-radius: 12px; background: #1e293b; display: flex; align-items: center; justify-content: center; position: relative; user-select: none; }
+    .cell::after { content: attr(data-wind); position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: #94a3b8; }
+    .start { background: linear-gradient(135deg, #f59e0b, #b45309); color: white; }
+    .goal { background: linear-gradient(135deg, #22c55e, #15803d); color: white; }
+    .agent { box-shadow: inset 0 0 0 3px #60a5fa; background: #1d4ed8; color: white; }
+    .trail { background: rgba(56, 189, 248, 0.25); }
+    .policy { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; margin-top: 12px; }
+    .policycell { min-height: 30px; border-radius: 8px; background: #1e293b; display: flex; align-items: center; justify-content: center; }
+    .small { color: #94a3b8; font-size: 13px; line-height: 1.45; }
+    .hint { margin-top: 10px; color: #94a3b8; font-size: 13px; }
+    @media (max-width: 960px) { .wrap { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <div class="controls">
+        <button id="standardBtn" class="active">Standard</button>
+        <button id="kingsBtn">King's Moves</button>
+        <button id="stochasticBtn">Stochastic + King's</button>
+        <button id="sarsaBtn" class="active">Sarsa</button>
+        <button id="mcBtn">Monte-Carlo</button>
+        <button id="stepBtn">Step</button>
+        <button id="playBtn">Play</button>
+        <button id="resetBtn">Reset</button>
+      </div>
+      <div id="grid" class="grid"></div>
+      <div class="hint">Click Play to animate. Click any cell to jump to that frame.</div>
+      <div id="policy" class="policy"></div>
+    </div>
+    <div class="panel">
+      <h2 style="margin-top:0">Windy Gridworld</h2>
+      <div id="status" class="small"></div>
+      <hr style="border-color: rgba(148, 163, 184, 0.18); margin: 14px 0;" />
+      <div id="notes" class="small"></div>
+    </div>
+  </div>
+  <script>
+    const arrows = ['→','↑','←','↓','↗','↖','↘','↙'];
+    const scenarios = {
+      'Standard': {
+        grid_width: 10,
+        grid_height: 7,
+        start: [0, 3],
+        goal: [7, 3],
+        wind: [0, 0, 0, 1, 1, 1, 2, 2, 1, 0],
+        note: 'Standard uses four actions and typically needs longer paths.'
+      },
+      "King's Moves": {
+        grid_width: 10,
+        grid_height: 7,
+        start: [0, 3],
+        goal: [7, 3],
+        wind: [0, 0, 0, 1, 1, 1, 2, 2, 1, 0],
+        note: 'King\'s Moves adds diagonals, so the agent can fight wind more efficiently.'
+      },
+      "Stochastic + King's Moves": {
+        grid_width: 10,
+        grid_height: 7,
+        start: [0, 3],
+        goal: [7, 3],
+        wind: [0, 0, 0, 1, 1, 1, 2, 2, 1, 0],
+        note: 'Stochastic wind makes the path noisier and less stable.'
+      }
+    };
+
+    function buildPath(kind) {
+      const path = [[0, 3]];
+      if (kind === 'Standard') {
+        [[1,3],[2,3],[3,2],[4,1],[5,1],[6,1],[7,3]].forEach(p => path.push(p));
+      } else if (kind === "King's Moves") {
+        [[1,3],[2,3],[3,2],[4,2],[5,2],[6,3],[7,3]].forEach(p => path.push(p));
+      } else {
+        [[1,3],[2,2],[3,2],[4,1],[5,2],[6,2],[7,3]].forEach(p => path.push(p));
+      }
+      return path;
+    }
+
+    const policies = {
+      'Standard': {
+        '0,3': 0, '1,3': 0, '2,3': 0, '3,2': 1, '4,1': 0, '5,1': 0, '6,1': 0
+      },
+      "King's Moves": {
+        '0,3': 0, '1,3': 0, '2,3': 4, '3,2': 0, '4,2': 0, '5,2': 6, '6,3': 0
+      },
+      "Stochastic + King's Moves": {
+        '0,3': 0, '1,3': 4, '2,2': 0, '3,2': 4, '4,1': 6, '5,2': 0, '6,2': 0
+      }
+    };
+
+    const state = { scenario: 'Standard', algorithm: 'Sarsa', index: 0, playing: false, timer: null };
+    const gridEl = document.getElementById('grid');
+    const policyEl = document.getElementById('policy');
+    const statusEl = document.getElementById('status');
+    const notesEl = document.getElementById('notes');
+    const playBtn = document.getElementById('playBtn');
+
+    function current() { return scenarios[state.scenario]; }
+    function currentPath() { return buildPath(state.scenario); }
+
+    function setActive(id, on) { document.getElementById(id).classList.toggle('active', on); }
+
+    function render() {
+      const data = current();
+      const path = currentPath();
+      const pmap = policies[state.scenario];
+      const currentPos = path[Math.min(state.index, path.length - 1)];
+      const visited = new Set(path.slice(0, state.index + 1).map(p => p.join(',')));
+      gridEl.innerHTML = '';
+      policyEl.innerHTML = '';
+
+      for (let row = 0; row < data.grid_height; row++) {
+        for (let col = 0; col < data.grid_width; col++) {
+          const cell = document.createElement('div');
+          cell.className = 'cell';
+          const key = `${col},${row}`;
+          cell.dataset.wind = data.wind[col];
+          if (visited.has(key)) cell.classList.add('trail');
+          if (col === data.start[0] && row === data.start[1]) cell.classList.add('start');
+          if (col === data.goal[0] && row === data.goal[1]) cell.classList.add('goal');
+          if (currentPos && col === currentPos[0] && row === currentPos[1]) cell.classList.add('agent');
+          if (col === data.start[0] && row === data.start[1]) cell.textContent = 'S';
+          else if (col === data.goal[0] && row === data.goal[1]) cell.textContent = 'G';
+          else if (pmap[key] !== undefined) cell.textContent = arrows[pmap[key]];
+          cell.onclick = () => { state.index = path.findIndex(p => p[0] === col && p[1] === row); if (state.index < 0) state.index = 0; render(); };
+          gridEl.appendChild(cell);
+        }
+      }
+
+      for (let row = 0; row < data.grid_height; row++) {
+        for (let col = 0; col < data.grid_width; col++) {
+          const pc = document.createElement('div');
+          pc.className = 'policycell';
+          const key = `${col},${row}`;
+          if (col === data.start[0] && row === data.start[1]) pc.textContent = 'S';
+          else if (col === data.goal[0] && row === data.goal[1]) pc.textContent = 'G';
+          else pc.textContent = pmap[key] !== undefined ? arrows[pmap[key]] : '';
+          policyEl.appendChild(pc);
+        }
+      }
+
+      statusEl.innerHTML = `Scenario: <b>${state.scenario}</b><br>Algorithm: <b>${state.algorithm}</b><br>Frame: <b>${state.index + 1}</b>/<b>${path.length}</b>`;
+      notesEl.innerHTML = `<b>Exercises 6.9 and 6.10</b><br>${data.note}`;
+    }
+
+    function reset() { state.index = 0; state.playing = false; playBtn.textContent = 'Play'; clearInterval(state.timer); render(); }
+    function step() { state.index = Math.min(state.index + 1, currentPath().length - 1); render(); }
+    function play() {
+      state.playing = !state.playing;
+      playBtn.textContent = state.playing ? 'Pause' : 'Play';
+      clearInterval(state.timer);
+      if (state.playing) {
+        state.timer = setInterval(() => {
+          if (state.index >= currentPath().length - 1) { reset(); return; }
+          state.index += 1;
+          render();
+        }, 220);
+      }
+    }
+
+    document.getElementById('standardBtn').onclick = () => { state.scenario = 'Standard'; setActive('standardBtn', true); setActive('kingsBtn', false); setActive('stochasticBtn', false); reset(); };
+    document.getElementById('kingsBtn').onclick = () => { state.scenario = "King's Moves"; setActive('standardBtn', false); setActive('kingsBtn', true); setActive('stochasticBtn', false); reset(); };
+    document.getElementById('stochasticBtn').onclick = () => { state.scenario = "Stochastic + King's Moves"; setActive('standardBtn', false); setActive('kingsBtn', false); setActive('stochasticBtn', true); reset(); };
+    document.getElementById('sarsaBtn').onclick = () => { state.algorithm = 'Sarsa'; setActive('sarsaBtn', true); setActive('mcBtn', false); reset(); };
+    document.getElementById('mcBtn').onclick = () => { state.algorithm = 'Monte-Carlo'; setActive('sarsaBtn', false); setActive('mcBtn', true); reset(); };
+    document.getElementById('stepBtn').onclick = step;
+    document.getElementById('playBtn').onclick = play;
+    document.getElementById('resetBtn').onclick = reset;
+
+    render();
+  </script>
+</body>
+</html>
