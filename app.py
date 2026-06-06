@@ -6,22 +6,20 @@ import random
 import time
 
 # ==========================================================
-# PAGE
+# PAGE CONFIG
 # ==========================================================
 
 st.set_page_config(page_title="Windy Gridworld RL", layout="wide")
 
-st.title("🌪️ Windy Gridworld — Reinforcement Learning")
+st.title("🌪️ Windy Gridworld — SARSA & Monte Carlo")
+st.write("Chapter 6 — Sutton & Barto")
 
 # ==========================================================
 # SESSION STATE
 # ==========================================================
 
-if "path" not in st.session_state:
-    st.session_state.path = []
-
-if "play" not in st.session_state:
-    st.session_state.play = False
+if "trained" not in st.session_state:
+    st.session_state.trained = False
 
 # ==========================================================
 # ENVIRONMENT
@@ -30,7 +28,7 @@ if "play" not in st.session_state:
 
 class WindyGridworld:
 
-    def __init__(self, kings_moves=False, stochastic=False):
+    def __init__(self, kings_moves=False, stochastic=False, stay_action=False):
 
         self.width = 10
         self.height = 7
@@ -42,8 +40,24 @@ class WindyGridworld:
 
         self.kings_moves = kings_moves
         self.stochastic = stochastic
+        self.stay_action = stay_action
 
-        if kings_moves:
+        # ==================================================
+        # ACTIONS
+        # ==================================================
+
+        # STANDARD 4 ACTIONS
+        if not kings_moves:
+
+            self.actions = [
+                (1, 0),  # RIGHT
+                (0, -1),  # UP
+                (-1, 0),  # LEFT
+                (0, 1),  # DOWN
+            ]
+
+        # KING'S MOVES (8 ACTIONS)
+        elif kings_moves and not stay_action:
 
             self.actions = [
                 (1, 0),
@@ -56,9 +70,20 @@ class WindyGridworld:
                 (-1, 1),
             ]
 
-        else:
+        # KING'S + STAY (9 ACTIONS)
+        elif kings_moves and stay_action:
 
-            self.actions = [(1, 0), (0, -1), (-1, 0), (0, 1)]
+            self.actions = [
+                (1, 0),
+                (0, -1),
+                (-1, 0),
+                (0, 1),
+                (1, -1),
+                (-1, -1),
+                (1, 1),
+                (-1, 1),
+                (0, 0),  # STAY STILL
+            ]
 
         self.num_actions = len(self.actions)
 
@@ -76,17 +101,22 @@ class WindyGridworld:
 
         dx, dy = self.actions[action]
 
+        # MOVE
         x += dx
         y += dy
 
+        # WIND
         wind_strength = self.wind[x] if 0 <= x < self.width else 0
 
+        # STOCHASTIC WIND
         if self.stochastic:
 
             wind_strength += random.choice([-1, 0, 1])
 
+        # APPLY WIND
         y -= wind_strength
 
+        # BOUNDARY
         x = max(0, min(self.width - 1, x))
         y = max(0, min(self.height - 1, y))
 
@@ -100,7 +130,7 @@ class WindyGridworld:
 
 
 # ==========================================================
-# SARSA
+# SARSA AGENT
 # ==========================================================
 
 
@@ -144,6 +174,7 @@ class SARSAAgent:
 
                 next_action = self.choose_action(next_state)
 
+                # SARSA UPDATE
                 td_target = reward
 
                 if not done:
@@ -161,19 +192,9 @@ class SARSAAgent:
 
             self.steps_per_episode.append(steps)
 
-    def get_policy(self):
-
-        policy = {}
-
-        for state in self.Q:
-
-            policy[state] = np.argmax(self.Q[state])
-
-        return policy
-
 
 # ==========================================================
-# MONTE CARLO
+# MONTE CARLO AGENT
 # ==========================================================
 
 
@@ -226,6 +247,7 @@ class MonteCarloAgent:
 
             self.steps_per_episode.append(steps)
 
+            # FIRST VISIT MONTE CARLO
             G = 0
 
             visited = set()
@@ -244,23 +266,13 @@ class MonteCarloAgent:
 
                     self.Q[state][action] = np.mean(self.returns[(state, action)])
 
-    def get_policy(self):
-
-        policy = {}
-
-        for state in self.Q:
-
-            policy[state] = np.argmax(self.Q[state])
-
-        return policy
-
 
 # ==========================================================
 # GENERATE PATH
 # ==========================================================
 
 
-def generate_path(env, policy):
+def generate_path(env, agent):
 
     state = env.reset()
 
@@ -270,10 +282,14 @@ def generate_path(env, policy):
 
     steps = 0
 
+    visited = set()
+
     while not done and steps < 100:
 
-        if state not in policy:
+        if state in visited:
             break
+
+        visited.add(state)
 
         action = np.argmax(agent.Q[state])
 
@@ -289,13 +305,13 @@ def generate_path(env, policy):
 
 
 # ==========================================================
-# DRAW FUNCTION
+# DRAW POLICY
 # ==========================================================
 
 
-def draw_policy(env, policy, algorithm, current_position=None):
+def draw_policy(env, agent, blink_goal=False, current_position=None):
 
-    arrows = {0: "→", 1: "↑", 2: "←", 3: "↓", 4: "↗", 5: "↖", 6: "↘", 7: "↙"}
+    arrows = {0: "→", 1: "↑", 2: "←", 3: "↓", 4: "↗", 5: "↖", 6: "↘", 7: "↙", 8: "•"}
 
     fig, ax = plt.subplots(figsize=(10, 7))
 
@@ -307,15 +323,17 @@ def draw_policy(env, policy, algorithm, current_position=None):
 
     ax.grid()
 
-    # WIND
+    # WIND LABELS
     for col in range(env.width):
 
-        ax.text(col, -0.3, f"W={env.wind[col]}", ha="center", color="red")
+        ax.text(col, -0.4, f"W={env.wind[col]}", color="red", ha="center")
 
-    # POLICY
-    for state, action in policy.items():
+    # POLICY ARROWS
+    for state in agent.Q:
 
         x, y = state
+
+        action = np.argmax(agent.Q[state])
 
         ax.text(x, y, arrows[action], fontsize=20, ha="center", va="center")
 
@@ -327,14 +345,22 @@ def draw_policy(env, policy, algorithm, current_position=None):
     # GOAL
     gx, gy = env.goal
 
-    ax.text(gx, gy, "G", fontsize=24, color="green", ha="center")
+    goal_color = "green"
 
-    # AGENT
+    if blink_goal and current_position == env.goal:
+
+        if int(time.time() * 3) % 2 == 0:
+
+            goal_color = "yellow"
+
+    ax.text(gx, gy, "G", fontsize=24, color=goal_color, ha="center")
+
+    # CURRENT AGENT POSITION
     if current_position is not None:
 
-        ax.plot(current_position[0], current_position[1], "bo", markersize=20)
+        ax.plot(current_position[0], current_position[1], "bo", markersize=18)
 
-    ax.set_title(f"{algorithm} Learned Policy")
+    ax.set_title("Learned Policy")
 
     return fig
 
@@ -349,32 +375,40 @@ algorithm = st.sidebar.selectbox("Algorithm", ["SARSA", "Monte Carlo"])
 
 episodes = st.sidebar.slider("Training Episodes", 100, 10000, 5000)
 
-alpha = st.sidebar.slider("Learning Rate (alpha)", 0.01, 1.0, 0.5)
+alpha = st.sidebar.slider("Learning Rate α", 0.01, 1.0, 0.5)
 
-epsilon = st.sidebar.slider("Exploration (epsilon)", 0.01, 1.0, 0.1)
+epsilon = st.sidebar.slider("Exploration ε", 0.01, 1.0, 0.1)
 
-gamma = st.sidebar.slider("Discount Factor (gamma)", 0.1, 1.0, 1.0)
+gamma = st.sidebar.slider("Discount Factor γ", 0.1, 1.0, 1.0)
 
-kings_moves = st.sidebar.checkbox("King's Moves", value=True)
+kings_moves = st.sidebar.checkbox("King's Moves (8 Actions)", value=True)
+
+stay_action = st.sidebar.checkbox("Stay Action (9th Action)", value=False)
 
 stochastic = st.sidebar.checkbox("Stochastic Wind", value=False)
 
+blink_goal = st.sidebar.checkbox("Blink Goal", value=True)
+
 train_button = st.sidebar.button("🚀 Train Agent")
 
-play_button = st.sidebar.button("▶️ Play Learned Path")
+play_button = st.sidebar.button("▶ Play Learned Path")
 
 # ==========================================================
-# TRAIN
+# TRAINING
 # ==========================================================
 
 if train_button:
 
-    env = WindyGridworld(kings_moves=kings_moves, stochastic=stochastic)
+    env = WindyGridworld(
+        kings_moves=kings_moves, stochastic=stochastic, stay_action=stay_action
+    )
 
+    # SARSA
     if algorithm == "SARSA":
 
         agent = SARSAAgent(env, alpha, epsilon, gamma)
 
+    # MONTE CARLO
     else:
 
         agent = MonteCarloAgent(env, epsilon, gamma)
@@ -383,37 +417,39 @@ if train_button:
 
         agent.train(episodes)
 
-    policy = agent.get_policy()
-
-    path = generate_path(env, policy)
-
-    st.session_state.path = path
-    st.session_state.policy = policy
     st.session_state.env = env
     st.session_state.agent = agent
-    st.session_state.algorithm = algorithm
+    st.session_state.path = generate_path(env, agent)
 
-    st.success("Training Complete!")
+    st.session_state.trained = True
 
 # ==========================================================
-# DISPLAY POLICY
+# DISPLAY RESULTS
 # ==========================================================
 
-if "policy" in st.session_state:
+if st.session_state.trained:
+
+    env = st.session_state.env
+    agent = st.session_state.agent
+    path = st.session_state.path
+
+    # ======================================================
+    # STEP SLIDER
+    # ======================================================
+
+    step_slider = st.slider("Step Viewer", 0, max(len(path) - 1, 0), 0)
+
+    current_position = path[step_slider]
+
+    # ======================================================
+    # POLICY DISPLAY
+    # ======================================================
 
     fig = draw_policy(
-        st.session_state.env, st.session_state.policy, st.session_state.algorithm
+        env, agent, blink_goal=blink_goal, current_position=current_position
     )
 
     st.pyplot(fig)
-
-    # ======================================================
-    # PATH
-    # ======================================================
-
-    st.subheader("📍 Learned Path")
-
-    st.write(st.session_state.path)
 
     # ======================================================
     # PLAY ANIMATION
@@ -421,37 +457,31 @@ if "policy" in st.session_state:
 
     if play_button:
 
-        placeholder = st.empty()
+        animation_placeholder = st.empty()
 
-        for pos in st.session_state.path:
+        for pos in path:
 
-            fig = draw_policy(
-                st.session_state.env,
-                st.session_state.policy,
-                st.session_state.algorithm,
-                current_position=pos,
-            )
+            plt.close("all")
 
-            placeholder.pyplot(fig)
+            fig = draw_policy(env, agent, blink_goal=blink_goal, current_position=pos)
 
-            time.sleep(0.4)
+            animation_placeholder.pyplot(fig, clear_figure=True)
+
+        time.sleep(0.55)
 
     # ======================================================
     # LEARNING CURVE
     # ======================================================
 
+    st.subheader("📈 Learning Curve")
+
     fig2, ax2 = plt.subplots(figsize=(10, 4))
 
-    moving_avg = np.convolve(
-        st.session_state.agent.steps_per_episode, np.ones(100) / 100, mode="valid"
-    )
+    moving_avg = np.convolve(agent.steps_per_episode, np.ones(100) / 100, mode="valid")
 
     ax2.plot(moving_avg)
 
-    ax2.set_title("Learning Curve")
-
     ax2.set_xlabel("Episode")
-
     ax2.set_ylabel("Steps to Goal")
 
     ax2.grid()
@@ -459,35 +489,45 @@ if "policy" in st.session_state:
     st.pyplot(fig2)
 
     # ======================================================
-    # STATS
+    # PERFORMANCE
     # ======================================================
 
-    st.subheader("📊 Statistics")
+    avg_steps = np.mean(agent.steps_per_episode[-100:])
 
-    st.write(
-        "Average Final Steps:", np.mean(st.session_state.agent.steps_per_episode[-100:])
-    )
+    st.subheader("📊 Performance")
 
-    st.write("Total Learned States:", len(st.session_state.policy))
+    st.write("Average Final Steps:", round(avg_steps, 2))
+
+    st.write("Total Learned States:", len(agent.Q))
 
     # ======================================================
-    # EXPLANATION
+    # OBSERVATIONS
     # ======================================================
 
-    st.subheader("🧠 Explanation")
+    st.subheader("🧠 Observations")
+
+    if not kings_moves:
+
+        st.write("Standard Windy Gridworld produces zig-zag trajectories.")
 
     if kings_moves:
 
-        st.write("King's Moves allow diagonal movement and shorter paths.")
+        st.write("King's Moves produce shorter and smoother trajectories.")
+
+    if stay_action:
+
+        st.write("The 9th stay action allows the agent to use wind efficiently.")
 
     if stochastic:
 
-        st.write("Stochastic wind creates more robust and cautious policies.")
+        st.write("Stochastic wind creates safer and more robust policies.")
 
     if algorithm == "SARSA":
 
-        st.write("SARSA updates after every step using TD learning.")
+        st.write("SARSA learns online using Temporal Difference updates.")
 
     else:
 
-        st.write("Monte Carlo waits until the end of an episode before learning.")
+        st.write(
+            "Monte Carlo learns slower because updates happen after full episodes."
+        )
