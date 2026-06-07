@@ -12,6 +12,7 @@ import time
 st.set_page_config(page_title="Windy Gridworld RL", layout="wide")
 
 st.title("🌪️ Windy Gridworld — SARSA & Monte Carlo")
+st.write("Chapter 6 — Sutton & Barto")
 
 # ==========================================================
 # SESSION STATE
@@ -27,7 +28,7 @@ if "trained" not in st.session_state:
 
 class WindyGridworld:
 
-    def __init__(self, kings_moves=False, stochastic=False, stay_action=False):
+    def __init__(self, wind, kings_moves=False, stochastic=False, stay_action=False):
 
         self.width = 10
         self.height = 7
@@ -35,7 +36,8 @@ class WindyGridworld:
         self.start = (0, 3)
         self.goal = (7, 3)
 
-        self.wind = [0, 0, 0, 1, 1, 1, 2, 2, 1, 0]
+        # CUSTOM WIND
+        self.wind = wind
 
         self.kings_moves = kings_moves
         self.stochastic = stochastic
@@ -81,7 +83,7 @@ class WindyGridworld:
                 (-1, -1),
                 (1, 1),
                 (-1, 1),
-                (0, 0),  # STAY STILL
+                (0, 0),
             ]
 
         self.num_actions = len(self.actions)
@@ -104,8 +106,11 @@ class WindyGridworld:
         x += dx
         y += dy
 
+        # BOUNDARY BEFORE WIND
+        x = max(0, min(self.width - 1, x))
+
         # WIND
-        wind_strength = self.wind[x] if 0 <= x < self.width else 0
+        wind_strength = self.wind[x]
 
         # STOCHASTIC WIND
         if self.stochastic:
@@ -115,7 +120,7 @@ class WindyGridworld:
         # APPLY WIND
         y -= wind_strength
 
-        # BOUNDARY
+        # FINAL BOUNDARY
         x = max(0, min(self.width - 1, x))
         y = max(0, min(self.height - 1, y))
 
@@ -232,7 +237,7 @@ class MonteCarloAgent:
 
             steps = 0
 
-            while not done and steps < 500:
+            while not done and steps < 1000:
 
                 action = self.choose_action(state)
 
@@ -281,16 +286,15 @@ def generate_path(env, agent):
 
     steps = 0
 
-    visited = set()
+    while not done and steps < 300:
 
-    while not done and steps < 100:
+        if state not in agent.Q:
 
-        if state in visited:
-            break
+            action = random.randint(0, env.num_actions - 1)
 
-        visited.add(state)
+        else:
 
-        action = np.argmax(agent.Q[state])
+            action = np.argmax(agent.Q[state])
 
         next_state, reward, done = env.step(action)
 
@@ -308,11 +312,11 @@ def generate_path(env, agent):
 # ==========================================================
 
 
-def draw_policy(env, agent, blink_goal=False, current_position=None):
+def draw_policy(env, agent, current_position=None):
 
     arrows = {0: "→", 1: "↑", 2: "←", 3: "↓", 4: "↗", 5: "↖", 6: "↘", 7: "↙", 8: "•"}
 
-    fig, ax = plt.subplots(figsize=(10, 7))
+    fig, ax = plt.subplots(figsize=(12, 8))
 
     ax.set_xlim(-0.5, env.width - 0.5)
     ax.set_ylim(env.height - 0.5, -0.5)
@@ -325,36 +329,38 @@ def draw_policy(env, agent, blink_goal=False, current_position=None):
     # WIND LABELS
     for col in range(env.width):
 
-        ax.text(col, -0.4, f"W={env.wind[col]}", color="red", ha="center")
+        ax.text(col, -0.45, f"W={env.wind[col]}", color="red", fontsize=12, ha="center")
 
-    # POLICY ARROWS
-    for state in agent.Q:
+    # POLICY
+    for x in range(env.width):
 
-        x, y = state
+        for y in range(env.height):
 
-        action = np.argmax(agent.Q[state])
+            state = (x, y)
 
-        ax.text(x, y, arrows[action], fontsize=20, ha="center", va="center")
+            if state in agent.Q:
+
+                action = np.argmax(agent.Q[state])
+
+                ax.text(x, y, arrows[action], fontsize=22, ha="center", va="center")
+
+            else:
+
+                ax.text(x, y, "·", fontsize=10, color="gray", ha="center", va="center")
 
     # START
     sx, sy = env.start
 
-    ax.text(sx, sy, "S", fontsize=24, color="orange", ha="center")
+    ax.text(sx, sy, "S", fontsize=28, color="orange", ha="center")
 
     # GOAL
     gx, gy = env.goal
 
     goal_color = "green"
 
-    if blink_goal and current_position == env.goal:
+    ax.text(gx, gy, "G", fontsize=28, color=goal_color, ha="center")
 
-        if int(time.time() * 3) % 2 == 0:
-
-            goal_color = "yellow"
-
-    ax.text(gx, gy, "G", fontsize=24, color=goal_color, ha="center")
-
-    # CURRENT AGENT POSITION
+    # CURRENT POSITION
     if current_position is not None:
 
         ax.plot(current_position[0], current_position[1], "bo", markersize=18)
@@ -372,7 +378,7 @@ st.sidebar.header("⚙️ Configuration")
 
 algorithm = st.sidebar.selectbox("Algorithm", ["SARSA", "Monte Carlo"])
 
-episodes = st.sidebar.slider("Training Episodes", 100, 10000, 5000)
+episodes = st.sidebar.slider("Training Episodes", 100, 20000, 5000)
 
 alpha = st.sidebar.slider("Learning Rate α", 0.01, 1.0, 0.5)
 
@@ -386,20 +392,42 @@ stay_action = st.sidebar.checkbox("Stay Action (9th Action)", value=False)
 
 stochastic = st.sidebar.checkbox("Stochastic Wind", value=False)
 
-blink_goal = st.sidebar.checkbox("Blink Goal", value=True)
+
+# ==========================================================
+# CUSTOM WIND
+# ==========================================================
+
+st.sidebar.subheader("🌪️ Wind Configuration")
+
+default_wind = [0, 0, 0, 1, 1, 1, 2, 2, 1, 0]
+
+wind = []
+
+for i in range(10):
+
+    w = st.sidebar.slider(f"Column {i}", 0, 5, default_wind[i])
+
+    wind.append(w)
+
+# ==========================================================
+# BUTTONS
+# ==========================================================
 
 train_button = st.sidebar.button("🚀 Train Agent")
 
 play_button = st.sidebar.button("▶ Play Learned Path")
 
 # ==========================================================
-# TRAINING
+# TRAIN
 # ==========================================================
 
 if train_button:
 
     env = WindyGridworld(
-        kings_moves=kings_moves, stochastic=stochastic, stay_action=stay_action
+        wind=wind,
+        kings_moves=kings_moves,
+        stochastic=stochastic,
+        stay_action=stay_action,
     )
 
     # SARSA
@@ -444,11 +472,11 @@ if st.session_state.trained:
     # POLICY DISPLAY
     # ======================================================
 
-    fig = draw_policy(
-        env, agent, blink_goal=blink_goal, current_position=current_position
-    )
+    fig = draw_policy(env, agent, current_position=current_position)
 
-    st.pyplot(fig)
+    grid_placeholder = st.empty()
+
+    grid_placeholder.pyplot(fig)
 
     # ======================================================
     # PLAY ANIMATION
@@ -456,17 +484,15 @@ if st.session_state.trained:
 
     if play_button:
 
-        animation_placeholder = st.empty()
-
         for pos in path:
 
             plt.close("all")
 
-            fig = draw_policy(env, agent, blink_goal=blink_goal, current_position=pos)
+            fig = draw_policy(env, agent, current_position=pos)
 
-            animation_placeholder.pyplot(fig, clear_figure=True)
+            grid_placeholder.pyplot(fig, clear_figure=True)
 
-        time.sleep(0.55)
+            time.sleep(0.25)
 
     # ======================================================
     # LEARNING CURVE
