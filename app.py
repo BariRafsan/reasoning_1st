@@ -12,7 +12,6 @@ import time
 st.set_page_config(page_title="Windy Gridworld RL", layout="wide")
 
 st.title("🌪️ Windy Gridworld — SARSA & Monte Carlo")
-st.write("Chapter 6 — Sutton & Barto")
 
 # ==========================================================
 # SESSION STATE
